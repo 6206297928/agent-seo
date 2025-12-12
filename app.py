@@ -29,6 +29,23 @@ with st.sidebar:
     max_pages = st.slider("Max Pages to Scan", 1, 6, 4)
     st.caption("Powered by Gemini 2.5 Flash")
 
+# --- HELPER: CSV CLEANER (The Fix for your Error) ---
+def clean_csv_output(text):
+    """
+    Strips 'Here is the CSV' text and markdown blocks to extract just the data.
+    """
+    # 1. Remove Markdown code blocks
+    text = text.replace("```csv", "").replace("```", "").strip()
+    
+    # 2. Split into lines
+    lines = text.split('\n')
+    
+    # 3. Filter out lines that don't look like CSV data (must contain a comma)
+    clean_lines = [line for line in lines if "," in line]
+    
+    # 4. Rejoin
+    return "\n".join(clean_lines)
+
 # --- CRAWLER FUNCTION ---
 @st.cache_data(show_spinner=False)
 def stealth_crawler(start_url, max_pages_limit):
@@ -130,86 +147,4 @@ def generate_executive_summary(raw_data, api_key):
     """
     return call_gemini(prompt, api_key)
 
-# --- PHASE 3: THE SURGEON (Detailed CSV) ---
-def generate_detailed_fixes(raw_data, api_key):
-    # Limit data input to avoid Token Limit
-    safe_data = raw_data[:15000]
-    
-    prompt = f"""
-    Act as an Expert Technical SEO Auditor.
-    Analyze the raw data below for specific actionable errors.
-    
-    LOOK FOR & REPORT:
-    - Technical: Fragment URLs (#content), Trailing Slash duplicates.
-    - Metadata: Generic Titles ("Home"), Missing Descriptions.
-    - Content: Weak H1s.
-    
-    OUTPUT FORMAT:
-    - Provide ONLY valid CSV rows. NO HEADERS.
-    - Columns: URL, Error_Type, Current_Value, Recommended_Fix, Priority
-    - Quote every field to handle commas.
-    
-    RAW DATA:
-    {safe_data}
-    """
-    result = call_gemini(prompt, api_key)
-    # Clean up any markdown code blocks
-    return result.replace("```csv", "").replace("```", "").strip()
-
-# --- MAIN APP LOGIC ---
-if api_key:
-    url_input = st.text_input("Website URL", placeholder="https://example.com")
-    
-    if st.button("🚀 Start Professional Audit"):
-        if not url_input.startswith("http"):
-            st.warning("Please include https://")
-        else:
-            # 1. CRAWL
-            crawled_data = stealth_crawler(url_input, max_pages)
-            
-            if crawled_data:
-                st.success("✅ Site Crawled Successfully!")
-                
-                # 2. EXECUTIVE SUMMARY
-                with st.status("🩺 Diagnosing Site Health (Gemini 2.5)...") as status:
-                    summary_report = generate_executive_summary(crawled_data, api_key)
-                    
-                    if "Error:" in summary_report:
-                        status.update(label="AI Failed", state="error")
-                        st.error(summary_report)
-                        st.stop()
-                    else:
-                        status.update(label="Diagnosis Complete!", state="complete")
-                
-                # Show Summary
-                st.markdown(summary_report)
-                st.divider()
-                
-                # 3. DETAILED FIXES
-                with st.spinner("🔪 Generating Detailed Fixes (The Surgeon)..."):
-                    csv_data = generate_detailed_fixes(crawled_data, api_key)
-                
-                # Show Table & Download
-                if "Error:" in csv_data:
-                    st.error(csv_data)
-                else:
-                    try:
-                        st.markdown("### 🛠️ Detailed Remediation Plan")
-                        headers = ['URL', 'Error_Type', 'Current_Value', 'Recommended_Fix', 'Priority']
-                        df = pd.read_csv(io.StringIO(csv_data), names=headers, header=None)
-                        st.dataframe(df, use_container_width=True)
-                        
-                        csv_file = df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="💾 Download Full Report (CSV)",
-                            data=csv_file,
-                            file_name="seo_audit_report.csv",
-                            mime="text/csv"
-                        )
-                    except Exception:
-                        st.error("Could not parse CSV. Here is the raw output:")
-                        st.text(csv_data)
-            else:
-                st.error("Crawler found no data. The site might be blocking bots.")
-else:
-    st.warning("👈 Please enter your API Key to start.")
+# --- PHASE
