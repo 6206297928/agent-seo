@@ -135,4 +135,17 @@ if api_key:
                     st.subheader("📋 Audit Results")
                     st.dataframe(df, use_container_width=True)
                     
-                    csv_data = df.to_csv(
+                    csv_data = df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="💾 Download Report",
+                        data=csv_data,
+                        file_name="seo_audit_report.csv",
+                        mime="text/csv",
+                    )
+                except Exception as e:
+                    st.error("AI Error: Quota exceeded or invalid response.")
+                    st.text(csv_result)
+            else:
+                st.error("Crawler blocked or found no data.")
+else:
+    st.warning("👈 Please enter your Gemini API Key in the sidebar.")
