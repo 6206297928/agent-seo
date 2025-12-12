@@ -8,58 +8,36 @@ from urllib.parse import urljoin, urlparse
 import google.generativeai as genai
 import urllib3
 
-# --- 1. ROBUST IMPORT (Handles missing BS4) ---
+# --- 1. PAGE CONFIG (MUST BE FIRST) ---
+st.set_page_config(page_title="AI SEO Auditor", page_icon="✨", layout="wide")
+
+# --- 2. ROBUST IMPORT CHECK ---
 try:
     from bs4 import BeautifulSoup
 except ImportError:
-    st.error("❌ Critical Error: 'beautifulsoup4' is missing from requirements.txt.")
+    st.error("❌ Critical Error: 'beautifulsoup4' is missing.")
+    st.info("Please update your requirements.txt on GitHub to include 'beautifulsoup4'.")
     st.stop()
 
 # Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="AI SEO Auditor", page_icon="✨", layout="wide")
-st.title("✨ AI SEO Audit Agent (Gemini 2.5 Professional)")
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("⚙️ Configuration")
-    api_key = st.text_input("Enter Gemini API Key", type="password")
-    max_pages = st.slider("Max Pages to Scan", 1, 6, 4)
-    st.caption("Powered by Gemini 2.5 Flash")
-
-# --- HELPER: CSV CLEANER (The Fix for your Error) ---
+# --- 3. HELPER FUNCTIONS ---
 def clean_csv_output(text):
-    """
-    Strips 'Here is the CSV' text and markdown blocks to extract just the data.
-    """
-    # 1. Remove Markdown code blocks
     text = text.replace("```csv", "").replace("```", "").strip()
-    
-    # 2. Split into lines
     lines = text.split('\n')
-    
-    # 3. Filter out lines that don't look like CSV data (must contain a comma)
     clean_lines = [line for line in lines if "," in line]
-    
-    # 4. Rejoin
     return "\n".join(clean_lines)
 
-# --- CRAWLER FUNCTION ---
 @st.cache_data(show_spinner=False)
 def stealth_crawler(start_url, max_pages_limit):
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15'
-    ]
-    
+    user_agents = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36']
     visited = set()
     queue = [start_url]
     raw_data = []
     base_domain = urlparse(start_url).netloc
     
-    progress_bar = st.progress(0, text="🕷️ Spider is crawling...")
+    progress_bar = st.progress(0, text="🕷️ Waiting to start...")
     
     count = 0
     while queue and count < max_pages_limit:
@@ -67,10 +45,10 @@ def stealth_crawler(start_url, max_pages_limit):
         if url in visited: continue
             
         try:
-            progress_bar.progress((count + 1) / max_pages_limit, text=f"Scanning: {url}")
+            progress_bar.progress((count + 1) / max_pages_limit, text=f"Crawling: {url}")
             headers = {'User-Agent': random.choice(user_agents)}
-            time.sleep(random.uniform(0.5, 1.0)) # Polite delay
-
+            time.sleep(random.uniform(0.5, 1.0))
+            
             response = requests.get(url, headers=headers, timeout=5, verify=False)
             visited.add(url)
             
@@ -90,61 +68,76 @@ def stealth_crawler(start_url, max_pages_limit):
                         queue.append(full_link)
         except Exception:
             pass 
-
+    
     progress_bar.empty()
     return "\n".join(raw_data)
 
-# --- AI HELPER: ROBUST CALLER (FIXED MODELS) ---
 def call_gemini(prompt, api_key):
     genai.configure(api_key=api_key)
-    
-    # *** CORRECTED MODEL LIST FOR YOUR KEY ***
-    models = [
-        'gemini-2.5-flash',          # Your best model
-        'gemini-flash-latest',       # Your backup
-        'gemini-2.0-flash-lite-preview-02-05' # Low quota backup
-    ]
-    
-    last_error = ""
+    models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash-lite-preview-02-05']
     
     for model_name in models:
         try:
             model = genai.GenerativeModel(model_name)
-            # Generate
             response = model.generate_content(prompt)
             return response.text
-            
-        except Exception as e:
-            last_error = str(e)
-            if "429" in str(e): # Quota limit
-                time.sleep(5) # Wait a bit
-                continue # Try next model
-            if "404" in str(e): # Model not found
-                continue # Try next model
-            
-            # If it's another error, keep trying next model just in case
+        except Exception:
+            time.sleep(2)
             continue
-            
-    return f"Error: All models failed. Last error: {last_error}"
+    return "Error: All models failed."
 
-# --- PHASE 2: THE DIAGNOSTICIAN (Summary) ---
-def generate_executive_summary(raw_data, api_key):
-    # Limit data input to avoid Token Limit
+def generate_report(raw_data, api_key, report_type="summary"):
     safe_data = raw_data[:15000]
     
-    prompt = f"""
-    Act as a Senior SEO Auditor.
-    Analyze the raw crawl data below. Identify the Top 3 Critical Errors.
+    if report_type == "summary":
+        prompt = f"""
+        Act as a Senior SEO Auditor. Analyze this raw data.
+        OUTPUT FORMAT:
+        1. Headline: "### 📋 Executive Summary"
+        2. Brief strategy summary.
+        3. Markdown Table: | Critical Error | Severity | Description |
+        4. "### ⚠️ Action Required" section.
+        RAW DATA: {safe_data}
+        """
+        return call_gemini(prompt, api_key)
     
-    OUTPUT FORMAT:
-    1. A Headline: "### 📋 Executive Summary: Senior SEO Audit Findings"
-    2. A brief 1-sentence strategic summary.
-    3. A Markdown Table with columns: | # | Critical Error | Severity | Description |
-    4. A "### ⚠️ Summary Action Required" paragraph.
-    
-    RAW DATA:
-    {safe_data}
-    """
-    return call_gemini(prompt, api_key)
+    else: # Detailed Fixes
+        prompt = f"""
+        Act as an SEO Expert. 
+        OUTPUT: ONLY valid CSV rows. NO HEADERS. NO TEXT.
+        Format: "URL","Error","Current","Fix","Priority"
+        RAW DATA: {safe_data}
+        """
+        raw_res = call_gemini(prompt, api_key)
+        return clean_csv_output(raw_res)
 
-# --- PHASE
+# --- 4. MAIN APP UI ---
+st.title("✨ AI SEO Audit Agent")
+st.markdown("---")
+
+# ** UI FIX: MOVED INPUTS OUT OF SIDEBAR **
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.info("1. Configuration")
+    api_key = st.text_input("🔑 Enter Gemini API Key", type="password")
+    max_pages = st.slider("Pages to Scan", 1, 6, 3)
+
+with col2:
+    st.info("2. Target Website")
+    url_input = st.text_input("🌐 Enter Website URL", placeholder="https://example.com")
+    
+    start_btn = st.button("🚀 Start Professional Audit", type="primary")
+
+# --- 5. EXECUTION LOGIC ---
+if start_btn:
+    if not api_key:
+        st.error("❌ Please enter your API Key in the left box.")
+    elif not url_input:
+        st.error("❌ Please enter a Website URL.")
+    else:
+        if not url_input.startswith("http"):
+            url_input = "https://" + url_input
+            
+        st.divider()
+        st.write(f"###
