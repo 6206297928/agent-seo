@@ -84,7 +84,7 @@ def stealth_crawler(start_url, max_pages):
 
 def analyze_and_fix(raw_data, api_key):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('models/gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.0-flash')
     
     with st.spinner("🧠 AI is analyzing data and generating fixes..."):
         prompt = f"""
