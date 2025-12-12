@@ -83,10 +83,13 @@ def stealth_crawler(start_url, max_pages):
     return "\n".join(raw_data)
 
 def analyze_and_fix(raw_data, api_key):
+    # Configure the API
     genai.configure(api_key=api_key)
+    
+    # Use the Flash model (It has higher rate limits than Pro)
     model = genai.GenerativeModel('gemini-2.0-flash')
     
-    with st.spinner("🧠 AI is analyzing data and generating fixes..."):
+    with st.spinner("🧠 AI is analyzing (this may take a moment)..."):
         prompt = f"""
         You are an Expert SEO Auditor. Analyze this raw data.
         
@@ -102,11 +105,27 @@ def analyze_and_fix(raw_data, api_key):
         Quote every field.
         """
         
-        try:
-            response = model.generate_content(prompt)
-            return response.text.replace("```csv", "").replace("```", "").strip()
-        except Exception as e:
-            return f"Error: {e}"
+        # --- SMART RETRY LOGIC ---
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Try to generate content
+                response = model.generate_content(prompt)
+                return response.text.replace("```csv", "").replace("```", "").strip()
+            
+            except Exception as e:
+                error_msg = str(e)
+                # Check if it's a Quota Error (429)
+                if "429" in error_msg or "Quota" in error_msg:
+                    wait_time = 60  # Wait 60 seconds
+                    st.warning(f"⚠️ Speed limit hit. Waiting {wait_time} seconds before Retry #{attempt+1}...")
+                    time.sleep(wait_time)
+                    continue # Try again
+                else:
+                    # If it's a real error, stop
+                    return f"Error: {e}"
+        
+        return "❌ Failed after 3 retries. Please reduce 'Max Pages' or try again later."
 
 # --- MAIN APP UI ---
 if api_key:
