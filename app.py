@@ -15,21 +15,20 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="AI SEO Auditor", page_icon="🕵️", layout="wide")
 
-st.title("🕵️ AI SEO Audit Agent")
-st.markdown("Enter a website URL below to generate a comprehensive SEO Audit Report.")
+st.title("🕵️ AI SEO Audit Agent (Free Tier Optimized)")
+st.markdown("Enter a website URL below. This tool is optimized to stay within Google's free API limits.")
 
-# --- SIDEBAR CONFIG ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configuration")
     api_key = st.text_input("Enter Gemini API Key", type="password")
-    st.info("Get your key from [Google AI Studio](https://aistudio.google.com/).")
-    
-    max_pages = st.slider("Max Pages to Crawl", 1, 10, 5)
+    max_pages = st.slider("Max Pages to Crawl", 1, 5, 3) # Reduced max to 5 for safety
+    st.info("Limit set to 3-5 pages to prevent Quota Errors.")
 
-# --- FUNCTIONS (Your Logic) ---
-def stealth_crawler(start_url, max_pages):
-    st.toast(f"🕷️ Starting crawl on {start_url}...")
-    
+# --- 1. THE CRAWLER (With Caching) ---
+@st.cache_data(show_spinner=False)
+def stealth_crawler(start_url, max_pages_limit):
+    # This function only runs ONCE per URL. Streamlit remembers the result!
     user_agents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15'
@@ -40,24 +39,23 @@ def stealth_crawler(start_url, max_pages):
     raw_data = []
     base_domain = urlparse(start_url).netloc
     
-    # Progress bar
-    progress_text = "Crawling in progress. Please wait."
-    my_bar = st.progress(0, text=progress_text)
+    # Simple Progress Bar
+    progress_bar = st.progress(0, text="Starting spider...")
     
-    pages_scanned = 0
-
-    while queue and len(visited) < max_pages:
+    count = 0
+    while queue and count < max_pages_limit:
         url = queue.pop(0)
         if url in visited: continue
             
         try:
-            # Update UI
-            my_bar.progress((pages_scanned + 1) / max_pages, text=f"Scanning: {url}")
+            # Update Progress
+            progress_bar.progress((count + 1) / max_pages_limit, text=f"Crawling: {url}")
             
             headers = {'User-Agent': random.choice(user_agents)}
-            time.sleep(random.uniform(0.5, 1.5)) # Polite delay
+            # Polite delay to avoid blocking
+            time.sleep(random.uniform(0.5, 1.0))
 
-            response = requests.get(url, headers=headers, timeout=10, verify=False)
+            response = requests.get(url, headers=headers, timeout=5, verify=False)
             visited.add(url)
             
             if response.status_code == 200:
@@ -68,36 +66,40 @@ def stealth_crawler(start_url, max_pages):
                 meta = soup.find('meta', attrs={'name': 'description'})
                 desc = meta['content'] if meta else "MISSING"
                 
+                # Format Data
                 raw_data.append(f"URL: {url} | TITLE: {title} | H1: {h1} | DESC: {desc}")
-                pages_scanned += 1
+                count += 1
                 
                 # Find links
                 for link in soup.find_all('a', href=True):
                     full_link = urljoin(url, link['href'])
                     if urlparse(full_link).netloc == base_domain and full_link not in visited:
                         queue.append(full_link)
-        except Exception as e:
-            st.error(f"Error scanning {url}: {e}")
+        except Exception:
+            pass # Skip errors to keep moving
 
-    my_bar.empty()
+    progress_bar.empty() # Remove bar when done
     return "\n".join(raw_data)
 
+# --- 2. THE ANALYZER (With Token Limits) ---
 def analyze_and_fix(raw_data, api_key):
-    # Configure the API
     genai.configure(api_key=api_key)
+    # Using 'gemini-1.5-flash' as it is the most stable standard model
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
-    # Use the Flash model (It has higher rate limits than Pro)
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    # SAFETY: Truncate data to ~25,000 characters (approx 6k tokens)
+    # This ensures we NEVER hit the 32k token limit of the free tier
+    safe_data = raw_data[:25000] 
     
-    with st.spinner("🧠 AI is analyzing (this may take a moment)..."):
+    with st.spinner("🧠 AI is analyzing (Safe Mode)..."):
         prompt = f"""
-        You are an Expert SEO Auditor. Analyze this raw data.
+        You are an Expert SEO Auditor.
         
         TASK:
-        Create a detailed remediation plan CSV.
+        Audit this website data and provide a remediation plan.
         
         RAW DATA:
-        {raw_data}
+        {safe_data}
         
         OUTPUT FORMAT:
         ONLY valid CSV rows. NO HEADERS.
@@ -105,29 +107,13 @@ def analyze_and_fix(raw_data, api_key):
         Quote every field.
         """
         
-        # --- SMART RETRY LOGIC ---
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # Try to generate content
-                response = model.generate_content(prompt)
-                return response.text.replace("```csv", "").replace("```", "").strip()
-            
-            except Exception as e:
-                error_msg = str(e)
-                # Check if it's a Quota Error (429)
-                if "429" in error_msg or "Quota" in error_msg:
-                    wait_time = 60  # Wait 60 seconds
-                    st.warning(f"⚠️ Speed limit hit. Waiting {wait_time} seconds before Retry #{attempt+1}...")
-                    time.sleep(wait_time)
-                    continue # Try again
-                else:
-                    # If it's a real error, stop
-                    return f"Error: {e}"
-        
-        return "❌ Failed after 3 retries. Please reduce 'Max Pages' or try again later."
+        try:
+            response = model.generate_content(prompt)
+            return response.text.replace("```csv", "").replace("```", "").strip()
+        except Exception as e:
+            return f"Error: {e}"
 
-# --- MAIN APP UI ---
+# --- MAIN UI ---
 if api_key:
     url_input = st.text_input("Website URL", placeholder="https://example.com")
     
@@ -137,37 +123,34 @@ if api_key:
         else:
             if not url_input.startswith("http"): url_input = "https://" + url_input
             
-            # 1. CRAWL
+            # 1. CRAWL (Cached!)
             crawled_data = stealth_crawler(url_input, max_pages)
             
             if crawled_data:
-                st.success(f"✅ Crawling complete! Found data.")
-                with st.expander("View Raw Crawl Data"):
-                    st.code(crawled_data)
+                st.success(f"✅ Crawling complete! Sending to AI...")
                 
                 # 2. ANALYZE
                 csv_result = analyze_and_fix(crawled_data, api_key)
                 
-                # 3. DISPLAY
+                # 3. REPORT
                 try:
                     headers = ['URL', 'Error_Type', 'Current_Value', 'Recommended_Fix', 'Priority']
                     df = pd.read_csv(io.StringIO(csv_result), names=headers, header=None)
                     
-                    st.subheader("📋 Audit Report")
+                    st.subheader("📋 Audit Results")
                     st.dataframe(df, use_container_width=True)
                     
-                    # 4. DOWNLOAD
                     csv_data = df.to_csv(index=False).encode('utf-8')
                     st.download_button(
-                        label="💾 Download Report as CSV",
+                        label="💾 Download Report",
                         data=csv_data,
                         file_name="seo_audit_report.csv",
                         mime="text/csv",
                     )
                 except Exception as e:
-                    st.error(f"Formatting Error: {e}")
-                    st.text(csv_result)
+                    st.error("AI Error: Quota exceeded or invalid response.")
+                    st.text(csv_result) # Show the raw error so we know what happened
             else:
-                st.error("Crawler returned no data. Site might be blocking bots.")
+                st.error("Crawler blocked or found no data.")
 else:
-    st.warning("👈 Please enter your Gemini API Key in the sidebar to start.")
+    st.warning("👈 Please enter your Gemini API Key in the sidebar.")
