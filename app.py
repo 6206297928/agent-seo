@@ -1,10 +1,26 @@
+import sys
+import subprocess
+import importlib.util
+
+# --- 1. FORCE INSTALL FUNCTION ---
+def install_package(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# --- 2. CHECK & INSTALL BS4 ---
+if importlib.util.find_spec("bs4") is None:
+    print("⚠️ BeautifulSoup not found! Installing now...")
+    install_package("beautifulsoup4")
+else:
+    print("✅ BeautifulSoup is already installed.")
+
+# --- 3. NOW IMPORT IT ---
 import streamlit as st
 import time
 import random
 import requests
 import io
 import pandas as pd
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup  # This will now work guaranteed
 from urllib.parse import urljoin, urlparse
 import google.generativeai as genai
 import urllib3
