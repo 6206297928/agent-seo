@@ -1,39 +1,187 @@
-Enter Client Website URL: www.marketingwithshruti.com
-🕷️ SPIDER ACTIVATED: Crawling https://www.marketingwithshruti.com in Stealth Mode...
-   ✅ Scraped: https://www.marketingwithshruti.com
-   ✅ Scraped: https://www.marketingwithshruti.com#content
-   ✅ Scraped: https://www.marketingwithshruti.com/
-   ✅ Scraped: https://www.marketingwithshruti.com/custom-seo-solutions/
-   ✅ Scraped: https://www.marketingwithshruti.com/gmb-service/
-   ✅ Scraped: https://www.marketingwithshruti.com/seo-glossary/
+import streamlit as st
+import time
+import random
+import requests
+import io
+import pandas as pd
+from urllib.parse import urljoin, urlparse
+import google.generativeai as genai
+import urllib3
 
-🩺 DIAGNOSTICIAN: Analyzing site health against ranking factors...
+# --- 1. ROBUST IMPORT (Handles missing BS4) ---
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    st.error("❌ Critical Error: 'beautifulsoup4' is missing from requirements.txt.")
+    st.stop()
 
-📋 EXECUTIVE SUMMARY
-Senior SEO Audit Findings: Top 3 Critical Errors
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-Based on the raw crawl data, the most immediate and severe issues concern homepage canonicalization and content duplication.
-# 	Critical Error 	Severity 	Description
-1 	Severe Duplicate Title Tags 	High 	Three distinct URLs (/, /#content, and the root domain) are serving the exact same Title Tag: "Home - Marketing With Shruti". This signals severe content duplication and a failure to consolidate link equity to a single canonical homepage version.
-2 	Broken Canonicalization/Redirect Chain 	High 	The existence of three identical versions of the homepage content (URLs 1, 2, and 3) indicates that the necessary 301 redirects and canonical tags are not properly implemented. This forces search engines to crawl and choose a single version, wasting valuable crawl budget.
-3 	Fragment URL Indexation 	Medium/High 	The presence of a fragment URL (https://www.marketingwithshruti.com#content) in the crawl data is highly problematic. Search engines typically ignore the fragment, but its inclusion in the index suggests either a fundamental internal linking error or a failure to properly handle anchor links, contributing directly to duplication issues (Error 1).
-Summary Action Required
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="AI SEO Auditor", page_icon="🕵️", layout="wide")
+st.title("🕵️ AI SEO Audit Agent (Professional Report)")
 
-The immediate priority is to implement proper canonical tags on the homepage variants and enforce 301 redirects to ensure all traffic and equity consolidates to the preferred root domain (e.g., https://www.marketingwithshruti.com/).
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    api_key = st.text_input("Enter Gemini API Key", type="password")
+    max_pages = st.slider("Max Pages to Scan", 1, 6, 4)
+    st.caption("Generates: 1. Executive Summary 2. Detailed Fixes")
 
+# --- CRAWLER FUNCTION ---
+@st.cache_data(show_spinner=False)
+def stealth_crawler(start_url, max_pages_limit):
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15'
+    ]
+    
+    visited = set()
+    queue = [start_url]
+    raw_data = []
+    base_domain = urlparse(start_url).netloc
+    
+    progress_bar = st.progress(0, text="🕷️ Spider is crawling...")
+    
+    count = 0
+    while queue and count < max_pages_limit:
+        url = queue.pop(0)
+        if url in visited: continue
+            
+        try:
+            progress_bar.progress((count + 1) / max_pages_limit, text=f"Scanning: {url}")
+            headers = {'User-Agent': random.choice(user_agents)}
+            time.sleep(random.uniform(0.5, 1.0)) # Polite delay
 
-🔪 UNIVERSAL SURGEON: Analyzing data for ANY SEO issue...
+            response = requests.get(url, headers=headers, timeout=5, verify=False)
+            visited.add(url)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                title = soup.title.string.strip() if soup.title else "MISSING"
+                h1 = soup.find('h1').get_text(strip=True) if soup.find('h1') else "MISSING"
+                meta = soup.find('meta', attrs={'name': 'description'})
+                desc = meta['content'] if meta else "MISSING"
+                
+                raw_data.append(f"URL: {url} | TITLE: {title} | H1: {h1} | DESC: {desc}")
+                count += 1
+                
+                for link in soup.find_all('a', href=True):
+                    full_link = urljoin(url, link['href'])
+                    if urlparse(full_link).netloc == base_domain and full_link not in visited:
+                        queue.append(full_link)
+        except Exception:
+            pass 
 
-✅ REPORT GENERATED SUCCESSFULLY!
+    progress_bar.empty()
+    return "\n".join(raw_data)
 
-	URL 	Error_Type 	Current_Value 	Recommended_Fix 	Priority
-0 	https://www.marketingwithshruti.com#content 	Technical - Fragment URL Crawled 	Duplicates metadata of primary homepage 	Ensure this fragment URL variant is non-indexa... 	High
-1 	https://www.marketingwithshruti.com/ 	Technical - Duplicate Content Source 	Duplicates metadata of non-trailing slash version 	Implement 301 redirect or strict canonical tag... 	High
-2 	https://www.marketingwithshruti.com 	Metadata - Generic Title Tag 	Home - Marketing With Shruti 	Change to: Expert Customized SEO Services | Gr... 	High
-3 	https://www.marketingwithshruti.com 	Metadata - Weak/Keywordless Description 	Click below to get your Website SEO Audit done... 	Describe core services and benefit: Get custom... 	Medium
-4 	https://www.marketingwithshruti.com/seo-glossary/ 	Content - H1/Title Mismatch (Lost Context) 	SEO Glossary 	Align H1 with Title for better internal cohere... 	Medium
-5 	https://www.marketingwithshruti.com/seo-glossary/ 	Metadata - Keyword Repetition / Stuffing 	Browse the SEO glossary and know all the SEO t... 	Shorten and improve flow: Access the definitiv... 	Low
+# --- AI HELPER: ROBUST CALLER ---
+def call_gemini(prompt, api_key):
+    genai.configure(api_key=api_key)
+    # Models to try in order
+    models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-pro']
+    
+    for model_name in models:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            if "429" in str(e): # Quota limit
+                time.sleep(5)
+                continue
+            if "404" in str(e): # Model not found
+                continue
+            return f"Error: {e}"
+    return "Error: All models failed."
 
+# --- PHASE 2: THE DIAGNOSTICIAN (Summary) ---
+def generate_executive_summary(raw_data, api_key):
+    prompt = f"""
+    Act as a Senior SEO Auditor.
+    Analyze the raw crawl data below. Identify the Top 3 Critical Errors.
+    
+    OUTPUT FORMAT:
+    1. A Headline: "### 📋 Executive Summary: Senior SEO Audit Findings"
+    2. A brief 1-sentence strategic summary.
+    3. A Markdown Table with columns: | # | Critical Error | Severity | Description |
+    4. A "### ⚠️ Summary Action Required" paragraph.
+    
+    RAW DATA:
+    {raw_data[:15000]}
+    """
+    return call_gemini(prompt, api_key)
 
-💾 FINAL FILE SAVED: 'seo_audit_report.csv'
-(Check the file folder on the left to download)
+# --- PHASE 3: THE SURGEON (Detailed CSV) ---
+def generate_detailed_fixes(raw_data, api_key):
+    prompt = f"""
+    Act as an Expert Technical SEO Auditor.
+    Analyze the raw data below for specific actionable errors.
+    
+    LOOK FOR & REPORT:
+    - Technical: Fragment URLs (#content), Trailing Slash duplicates.
+    - Metadata: Generic Titles ("Home"), Missing Descriptions.
+    - Content: Weak H1s.
+    
+    OUTPUT FORMAT:
+    - Provide ONLY valid CSV rows. NO HEADERS.
+    - Columns: URL, Error_Type, Current_Value, Recommended_Fix, Priority
+    - Quote every field to handle commas.
+    
+    RAW DATA:
+    {raw_data[:15000]}
+    """
+    result = call_gemini(prompt, api_key)
+    # Clean up any markdown code blocks
+    return result.replace("```csv", "").replace("```", "").strip()
+
+# --- MAIN APP LOGIC ---
+if api_key:
+    url_input = st.text_input("Website URL", placeholder="https://example.com")
+    
+    if st.button("🚀 Start Professional Audit"):
+        if not url_input.startswith("http"):
+            st.warning("Please include https://")
+        else:
+            # 1. CRAWL
+            crawled_data = stealth_crawler(url_input, max_pages)
+            
+            if crawled_data:
+                st.success("✅ Site Crawled Successfully!")
+                
+                # 2. EXECUTIVE SUMMARY
+                with st.status("🩺 Diagnosing Site Health...") as status:
+                    summary_report = generate_executive_summary(crawled_data, api_key)
+                    status.update(label="Diagnosis Complete!", state="complete")
+                
+                # Show Summary
+                st.markdown(summary_report)
+                st.divider()
+                
+                # 3. DETAILED FIXES
+                with st.spinner("🔪 Generating Detailed Fixes (The Surgeon)..."):
+                    csv_data = generate_detailed_fixes(crawled_data, api_key)
+                
+                # Show Table & Download
+                try:
+                    st.markdown("### 🛠️ Detailed Remediation Plan")
+                    headers = ['URL', 'Error_Type', 'Current_Value', 'Recommended_Fix', 'Priority']
+                    df = pd.read_csv(io.StringIO(csv_data), names=headers, header=None)
+                    st.dataframe(df, use_container_width=True)
+                    
+                    csv_file = df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="💾 Download Full Report (CSV)",
+                        data=csv_file,
+                        file_name="seo_audit_report.csv",
+                        mime="text/csv"
+                    )
+                except Exception:
+                    st.error("Could not parse CSV. Here is the raw output:")
+                    st.text(csv_data)
+            else:
+                st.error("Crawler found no data. The site might be blocking bots.")
+else:
+    st.warning("👈 Please enter your API Key to start.")
