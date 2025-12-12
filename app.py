@@ -24,8 +24,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- 3. HELPER FUNCTIONS ---
 def clean_csv_output(text):
+    # Removes markdown and extra text to find the CSV data
     text = text.replace("```csv", "").replace("```", "").strip()
     lines = text.split('\n')
+    # Keep only lines that look like CSV rows (have commas)
     clean_lines = [line for line in lines if "," in line]
     return "\n".join(clean_lines)
 
@@ -74,6 +76,7 @@ def stealth_crawler(start_url, max_pages_limit):
 
 def call_gemini(prompt, api_key):
     genai.configure(api_key=api_key)
+    # Models to try (Your API key supports these)
     models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash-lite-preview-02-05']
     
     for model_name in models:
@@ -82,11 +85,12 @@ def call_gemini(prompt, api_key):
             response = model.generate_content(prompt)
             return response.text
         except Exception:
-            time.sleep(2)
+            time.sleep(2) # Wait a moment if busy
             continue
     return "Error: All models failed."
 
 def generate_report(raw_data, api_key, report_type="summary"):
+    # Limit text to avoid quota errors
     safe_data = raw_data[:15000]
     
     if report_type == "summary":
@@ -115,7 +119,6 @@ def generate_report(raw_data, api_key, report_type="summary"):
 st.title("✨ AI SEO Audit Agent")
 st.markdown("---")
 
-# ** UI FIX: MOVED INPUTS OUT OF SIDEBAR **
 col1, col2 = st.columns([1, 2])
 
 with col1:
@@ -136,8 +139,46 @@ if start_btn:
     elif not url_input:
         st.error("❌ Please enter a Website URL.")
     else:
+        # Fix URL formatting
         if not url_input.startswith("http"):
             url_input = "https://" + url_input
             
         st.divider()
-        st.write(f"###
+        # THIS IS THE FIXED LINE BELOW:
+        st.write(f"### 🔄 Auditing: {url_input}")
+        
+        # 1. Crawl
+        crawled_data = stealth_crawler(url_input, max_pages)
+        
+        if crawled_data:
+            st.success(f"✅ Scanned {max_pages} pages successfully.")
+            
+            # 2. Executive Summary
+            with st.spinner("🧠 Generating Strategy Report..."):
+                summary = generate_report(crawled_data, api_key, "summary")
+                st.markdown(summary)
+            
+            st.divider()
+            
+            # 3. Detailed CSV
+            with st.spinner("🛠️ Generating Fixes Table..."):
+                csv_txt = generate_report(crawled_data, api_key, "detailed")
+                
+                # Check if we got valid CSV data back
+                if "Error" not in csv_txt and len(csv_txt) > 10:
+                    try:
+                        headers = ['URL', 'Error', 'Current', 'Fix', 'Priority']
+                        df = pd.read_csv(io.StringIO(csv_txt), names=headers, header=None, on_bad_lines='skip')
+                        
+                        st.markdown("### 🛠️ Detailed Action Plan")
+                        st.dataframe(df, use_container_width=True)
+                        
+                        csv_file = df.to_csv(index=False).encode('utf-8')
+                        st.download_button("💾 Download CSV Report", csv_file, "seo_audit.csv", "text/csv")
+                    except Exception as e:
+                        st.error(f"Error building table: {e}")
+                        st.code(csv_txt)
+                else:
+                    st.error("AI failed to generate fixes.")
+        else:
+            st.error("❌ Crawler failed. The website might be blocking bots.")
